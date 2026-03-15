@@ -1,0 +1,593 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>Weight Stack Speed Tracker</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --bg: #0a0a0f;
+    --surface: #14141c;
+    --surface2: #1e1e2a;
+    --border: rgba(255,255,255,0.08);
+    --accent: #00e5a0;
+    --accent2: #4d9cff;
+    --danger: #ff4d6d;
+    --text: #e8e8f0;
+    --muted: #6b6b80;
+    --font: 'SF Pro Display', -apple-system, 'Segoe UI', sans-serif;
+  }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--font);
+    min-height: 100vh;
+    overflow-x: hidden;
+  }
+
+  #app { display: flex; flex-direction: column; height: 100vh; }
+
+  /* Header */
+  #header {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 12px 16px;
+    border-bottom: 1px solid var(--border);
+    background: var(--surface);
+    flex-shrink: 0;
+  }
+  #header h1 { font-size: 15px; font-weight: 600; letter-spacing: 0.02em; }
+  #header h1 span { color: var(--accent); }
+  .set-badge {
+    background: var(--accent); color: #000;
+    font-size: 11px; font-weight: 700;
+    padding: 3px 10px; border-radius: 20px;
+    letter-spacing: 0.05em;
+  }
+
+  /* Camera area */
+  #cam-container {
+    position: relative;
+    flex-shrink: 0;
+    background: #000;
+    overflow: hidden;
+  }
+  #video {
+    width: 100%; display: block;
+    max-height: 38vh;
+    object-fit: cover;
+  }
+  #canvas-overlay {
+    position: absolute; top: 0; left: 0;
+    width: 100%; height: 100%;
+    pointer-events: none;
+  }
+  #roi-box {
+    position: absolute;
+    border: 2px solid var(--accent);
+    border-radius: 4px;
+    box-shadow: 0 0 0 2000px rgba(0,0,0,0.35);
+    cursor: move;
+    touch-action: none;
+  }
+  #roi-label {
+    position: absolute;
+    top: -22px; left: 0;
+    font-size: 10px; font-weight: 600;
+    color: var(--accent);
+    letter-spacing: 0.08em;
+    white-space: nowrap;
+  }
+  #roi-resize {
+    position: absolute; bottom: -6px; right: -6px;
+    width: 14px; height: 14px;
+    background: var(--accent); border-radius: 50%;
+    cursor: se-resize;
+    touch-action: none;
+  }
+
+  /* Speed meter */
+  #speed-panel {
+    display: flex; align-items: center;
+    padding: 10px 16px; gap: 16px;
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+    flex-shrink: 0;
+  }
+  #speed-display {
+    display: flex; align-items: baseline; gap: 4px;
+  }
+  #speed-val { font-size: 36px; font-weight: 700; font-variant-numeric: tabular-nums; color: var(--accent); line-height: 1; }
+  #speed-unit { font-size: 12px; color: var(--muted); }
+
+  #speed-bar-wrap { flex: 1; }
+  .bar-label { font-size: 10px; color: var(--muted); margin-bottom: 4px; }
+  #speed-bar-track {
+    height: 6px; background: var(--surface2);
+    border-radius: 3px; overflow: hidden;
+  }
+  #speed-bar {
+    height: 100%; width: 0%;
+    background: linear-gradient(90deg, var(--accent2), var(--accent));
+    border-radius: 3px;
+    transition: width 0.08s ease;
+  }
+
+  .metrics-row {
+    display: grid; grid-template-columns: repeat(3, 1fr);
+    gap: 1px; background: var(--border);
+    border-top: 1px solid var(--border);
+    border-bottom: 1px solid var(--border);
+    flex-shrink: 0;
+  }
+  .metric {
+    background: var(--surface);
+    padding: 8px 12px;
+    text-align: center;
+  }
+  .metric-val { font-size: 18px; font-weight: 700; font-variant-numeric: tabular-nums; }
+  .metric-val.green { color: var(--accent); }
+  .metric-val.blue { color: var(--accent2); }
+  .metric-val.red { color: var(--danger); }
+  .metric-label { font-size: 9px; color: var(--muted); letter-spacing: 0.06em; margin-top: 2px; }
+
+  /* Chart */
+  #chart-wrap {
+    flex: 1; position: relative; padding: 8px 8px 4px;
+    min-height: 0;
+    background: var(--bg);
+  }
+  #chart { width: 100%; height: 100%; display: block; }
+
+  /* Controls */
+  #controls {
+    display: flex; gap: 8px; padding: 10px 12px;
+    background: var(--surface);
+    border-top: 1px solid var(--border);
+    flex-shrink: 0;
+  }
+  .btn {
+    flex: 1; padding: 10px 8px;
+    border: 1px solid var(--border);
+    background: var(--surface2);
+    color: var(--text);
+    border-radius: 8px;
+    font-size: 13px; font-weight: 600;
+    cursor: pointer;
+    letter-spacing: 0.02em;
+    transition: background 0.15s, transform 0.1s;
+  }
+  .btn:active { transform: scale(0.97); }
+  .btn.primary { background: var(--accent); color: #000; border-color: var(--accent); }
+  .btn.danger { background: var(--danger); color: #fff; border-color: var(--danger); }
+  .btn.secondary { background: var(--surface2); }
+
+  #start-overlay {
+    position: absolute; inset: 0;
+    background: rgba(10,10,15,0.92);
+    display: flex; flex-direction: column;
+    align-items: center; justify-content: center;
+    gap: 16px; z-index: 10;
+  }
+  #start-overlay p { color: var(--muted); font-size: 13px; text-align: center; max-width: 240px; line-height: 1.6; }
+  .big-btn {
+    background: var(--accent); color: #000;
+    border: none; border-radius: 12px;
+    font-size: 16px; font-weight: 700;
+    padding: 14px 40px; cursor: pointer;
+    letter-spacing: 0.04em;
+  }
+
+  /* Rep flash */
+  #rep-flash {
+    position: absolute; top: 50%; left: 50%;
+    transform: translate(-50%,-50%) scale(0);
+    background: var(--accent); color: #000;
+    font-size: 24px; font-weight: 800;
+    border-radius: 50%; width: 70px; height: 70px;
+    display: flex; align-items: center; justify-content: center;
+    pointer-events: none; z-index: 20;
+    opacity: 0; transition: none;
+  }
+  #rep-flash.pop {
+    animation: repPop 0.5s ease-out forwards;
+  }
+  @keyframes repPop {
+    0% { transform: translate(-50%,-50%) scale(0); opacity: 1; }
+    50% { transform: translate(-50%,-50%) scale(1.2); opacity: 1; }
+    100% { transform: translate(-50%,-50%) scale(1.5); opacity: 0; }
+  }
+
+  #status-dot {
+    width: 8px; height: 8px; border-radius: 50%;
+    background: var(--muted); display: inline-block;
+    margin-right: 6px;
+  }
+  #status-dot.live { background: var(--danger); animation: blink 1s infinite; }
+  @keyframes blink { 0%,100% { opacity: 1; } 50% { opacity: 0.3; } }
+</style>
+</head>
+<body>
+<div id="app">
+  <div id="header">
+    <h1><span id="status-dot"></span>Weight<span> Speed</span></h1>
+    <div class="set-badge" id="set-label">SET 0</div>
+  </div>
+
+  <div id="cam-container">
+    <video id="video" autoplay muted playsinline></video>
+    <canvas id="canvas-overlay"></canvas>
+    <div id="roi-box">
+      <span id="roi-label">TRACK ZONE</span>
+      <div id="roi-resize"></div>
+    </div>
+    <div id="rep-flash">REP</div>
+    <div id="start-overlay">
+      <p>Point your camera at the weight stack.<br>A green box shows the tracking zone.<br>Drag to reposition, drag corner to resize.</p>
+      <button class="big-btn" id="start-btn">Start Camera</button>
+    </div>
+  </div>
+
+  <div id="speed-panel">
+    <div id="speed-display">
+      <span id="speed-val">0.0</span>
+      <span id="speed-unit">px/f</span>
+    </div>
+    <div id="speed-bar-wrap">
+      <div class="bar-label">VELOCITY</div>
+      <div id="speed-bar-track"><div id="speed-bar"></div></div>
+    </div>
+  </div>
+
+  <div class="metrics-row">
+    <div class="metric">
+      <div class="metric-val green" id="m-reps">0</div>
+      <div class="metric-label">REPS</div>
+    </div>
+    <div class="metric">
+      <div class="metric-val blue" id="m-peak">0.0</div>
+      <div class="metric-label">PEAK SPD</div>
+    </div>
+    <div class="metric">
+      <div class="metric-val red" id="m-sets">0</div>
+      <div class="metric-label">SETS</div>
+    </div>
+  </div>
+
+  <div id="chart-wrap">
+    <canvas id="chart"></canvas>
+  </div>
+
+  <div id="controls">
+    <button class="btn primary" id="track-btn" disabled>Track</button>
+    <button class="btn secondary" id="new-set-btn" disabled>New Set</button>
+    <button class="btn danger" id="clear-btn">Clear</button>
+  </div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
+<script>
+const video = document.getElementById('video');
+const overlay = document.getElementById('canvas-overlay');
+const ctx = overlay.getContext('2d');
+const roiBox = document.getElementById('roi-box');
+const startOverlay = document.getElementById('start-overlay');
+const startBtn = document.getElementById('start-btn');
+const trackBtn = document.getElementById('track-btn');
+const newSetBtn = document.getElementById('new-set-btn');
+const clearBtn = document.getElementById('clear-btn');
+const speedVal = document.getElementById('speed-val');
+const speedBar = document.getElementById('speed-bar');
+const mReps = document.getElementById('m-reps');
+const mPeak = document.getElementById('m-peak');
+const mSets = document.getElementById('m-sets');
+const setLabel = document.getElementById('set-label');
+const statusDot = document.getElementById('status-dot');
+const repFlash = document.getElementById('rep-flash');
+
+let tracking = false;
+let prevFrame = null;
+let animId = null;
+let hiddenCanvas, hCtx;
+
+let state = {
+  currentSet: 0,
+  reps: 0,
+  peakSpeed: 0,
+  speeds: [],
+  timestamps: [],
+  setData: [],
+  repInProgress: false,
+  restTimer: 0,
+  frameCount: 0
+};
+
+const SET_COLORS = [
+  '#00e5a0','#4d9cff','#ff4d6d','#ffd166','#c77dff','#ff9f43','#26c6da','#ef5350'
+];
+
+const chartCanvas = document.getElementById('chart');
+const chartCtx = chartCanvas.getContext('2d');
+let myChart = null;
+
+function initChart() {
+  if (myChart) myChart.destroy();
+  myChart = new Chart(chartCtx, {
+    type: 'line',
+    data: { datasets: [] },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      animation: false,
+      interaction: { mode: 'index', intersect: false },
+      scales: {
+        x: {
+          type: 'linear',
+          title: { display: true, text: 'Time (s)', color: '#6b6b80', font: { size: 10 } },
+          ticks: { color: '#6b6b80', font: { size: 10 }, maxTicksLimit: 8 },
+          grid: { color: 'rgba(255,255,255,0.05)' }
+        },
+        y: {
+          title: { display: true, text: 'Speed (px/frame)', color: '#6b6b80', font: { size: 10 } },
+          ticks: { color: '#6b6b80', font: { size: 10 }, maxTicksLimit: 6 },
+          grid: { color: 'rgba(255,255,255,0.05)' },
+          min: 0
+        }
+      },
+      plugins: {
+        legend: { display: true, position: 'bottom', labels: { color: '#e8e8f0', font: { size: 11 }, boxWidth: 12, padding: 10 } },
+        tooltip: {
+          backgroundColor: '#1e1e2a',
+          titleColor: '#e8e8f0',
+          bodyColor: '#6b6b80',
+          borderColor: 'rgba(255,255,255,0.1)',
+          borderWidth: 1
+        }
+      }
+    }
+  });
+}
+initChart();
+
+function addSetDataset() {
+  state.currentSet++;
+  const color = SET_COLORS[(state.currentSet - 1) % SET_COLORS.length];
+  state.setData.push({ label: `Set ${state.currentSet}`, times: [], speeds: [], color });
+  myChart.data.datasets.push({
+    label: `Set ${state.currentSet}`,
+    data: [],
+    borderColor: color,
+    backgroundColor: color + '22',
+    borderWidth: 2,
+    pointRadius: 0,
+    tension: 0.3,
+    fill: true
+  });
+  myChart.update('none');
+  setLabel.textContent = `SET ${state.currentSet}`;
+  mSets.textContent = state.currentSet;
+  state.reps = 0;
+  state.peakSpeed = 0;
+  state.frameCount = 0;
+  mReps.textContent = 0;
+  mPeak.textContent = '0.0';
+}
+
+function pushSpeed(speed) {
+  if (state.currentSet === 0) return;
+  const setIdx = state.currentSet - 1;
+  const t = state.frameCount / 30;
+  state.frameCount++;
+  const ds = myChart.data.datasets[setIdx];
+  ds.data.push({ x: parseFloat(t.toFixed(2)), y: parseFloat(speed.toFixed(2)) });
+  if (ds.data.length > 600) ds.data.shift();
+  myChart.update('none');
+
+  if (speed > state.peakSpeed) {
+    state.peakSpeed = speed;
+    mPeak.textContent = speed.toFixed(1);
+  }
+
+  const THRESHOLD = 3.5;
+  const REST_FRAMES = 18;
+  if (speed > THRESHOLD) {
+    if (!state.repInProgress) {
+      state.repInProgress = true;
+      state.restTimer = 0;
+    }
+  } else {
+    if (state.repInProgress) {
+      state.restTimer++;
+      if (state.restTimer > REST_FRAMES) {
+        state.repInProgress = false;
+        state.restTimer = 0;
+        state.reps++;
+        mReps.textContent = state.reps;
+        flashRep();
+      }
+    }
+  }
+}
+
+function flashRep() {
+  repFlash.classList.remove('pop');
+  void repFlash.offsetWidth;
+  repFlash.classList.add('pop');
+}
+
+let roiState = { x: 0.1, y: 0.1, w: 0.25, h: 0.7, dragging: false, resizing: false, startX: 0, startY: 0 };
+
+function updateROI() {
+  const cont = document.getElementById('cam-container');
+  const cw = cont.clientWidth, ch = cont.clientHeight;
+  roiBox.style.left = (roiState.x * cw) + 'px';
+  roiBox.style.top = (roiState.y * ch) + 'px';
+  roiBox.style.width = (roiState.w * cw) + 'px';
+  roiBox.style.height = (roiState.h * ch) + 'px';
+}
+
+roiBox.addEventListener('pointerdown', (e) => {
+  if (e.target === document.getElementById('roi-resize')) return;
+  e.preventDefault(); roiState.dragging = true;
+  roiState.startX = e.clientX; roiState.startY = e.clientY;
+  roiBox.setPointerCapture(e.pointerId);
+});
+document.getElementById('roi-resize').addEventListener('pointerdown', (e) => {
+  e.preventDefault(); e.stopPropagation();
+  roiState.resizing = true;
+  document.getElementById('roi-resize').setPointerCapture(e.pointerId);
+});
+document.addEventListener('pointermove', (e) => {
+  const cont = document.getElementById('cam-container');
+  const cw = cont.clientWidth, ch = cont.clientHeight;
+  if (roiState.dragging) {
+    const dx = (e.clientX - roiState.startX) / cw;
+    const dy = (e.clientY - roiState.startY) / ch;
+    roiState.x = Math.max(0, Math.min(1 - roiState.w, roiState.x + dx));
+    roiState.y = Math.max(0, Math.min(1 - roiState.h, roiState.y + dy));
+    roiState.startX = e.clientX; roiState.startY = e.clientY;
+    updateROI();
+  }
+  if (roiState.resizing) {
+    const rect = roiBox.getBoundingClientRect();
+    roiState.w = Math.max(0.05, (e.clientX - rect.left) / cw);
+    roiState.h = Math.max(0.1, (e.clientY - rect.top) / ch);
+    updateROI();
+  }
+});
+document.addEventListener('pointerup', () => { roiState.dragging = false; roiState.resizing = false; });
+
+async function startCamera() {
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: { ideal: 'environment' }, width: { ideal: 640 }, height: { ideal: 480 } }
+    });
+    video.srcObject = stream;
+    await video.play();
+    hiddenCanvas = document.createElement('canvas');
+    hCtx = hiddenCanvas.getContext('2d', { willReadFrequently: true });
+    startOverlay.style.display = 'none';
+    trackBtn.disabled = false;
+    newSetBtn.disabled = false;
+    statusDot.classList.add('live');
+    updateROI();
+    window.addEventListener('resize', updateROI);
+    addSetDataset();
+  } catch(e) {
+    alert('Camera access denied or unavailable: ' + e.message);
+  }
+}
+
+function getROIPixels() {
+  const cw = video.videoWidth, ch = video.videoHeight;
+  if (!cw || !ch) return null;
+  hiddenCanvas.width = cw; hiddenCanvas.height = ch;
+  hCtx.drawImage(video, 0, 0, cw, ch);
+  const rx = Math.floor(roiState.x * cw);
+  const ry = Math.floor(roiState.y * ch);
+  const rw = Math.max(1, Math.floor(roiState.w * cw));
+  const rh = Math.max(1, Math.floor(roiState.h * ch));
+  return hCtx.getImageData(rx, ry, rw, rh);
+}
+
+function computeMotion(a, b) {
+  if (!a || !b || a.width !== b.width || a.height !== b.height) return 0;
+  const d = a.data, e = b.data;
+  const len = d.length;
+  let sumDiff = 0, count = 0;
+  for (let i = 0; i < len; i += 4) {
+    const diff = Math.abs(d[i] - e[i]) + Math.abs(d[i+1] - e[i+1]) + Math.abs(d[i+2] - e[i+2]);
+    sumDiff += diff;
+    count++;
+  }
+  return count > 0 ? (sumDiff / count) / 255 * 100 : 0;
+}
+
+function computeVerticalFlow(a, b) {
+  if (!a || !b || a.width !== b.width || a.height !== b.height) return 0;
+  const d = a.data, e = b.data;
+  const w = a.width, h = a.height;
+  let flow = 0, weight = 0;
+  const step = 4;
+  for (let y = step; y < h - step; y += step) {
+    for (let x = 0; x < w; x += step) {
+      const i = (y * w + x) * 4;
+      const iUp = ((y - step) * w + x) * 4;
+      const iDown = ((y + step) * w + x) * 4;
+      const curr = (d[i] + d[i+1] + d[i+2]) / 3;
+      const up = (d[iUp] + d[iUp+1] + d[iUp+2]) / 3;
+      const down = (d[iDown] + d[iDown+1] + d[iDown+2]) / 3;
+      const temporal = (e[i] + e[i+1] + e[i+2]) / 3;
+      const spatialY = (down - up) / (2 * step);
+      const It = temporal - curr;
+      if (Math.abs(spatialY) > 1) {
+        const v = -It / spatialY;
+        flow += Math.abs(v);
+        weight++;
+      }
+    }
+  }
+  return weight > 0 ? flow / weight : 0;
+}
+
+function trackLoop() {
+  if (!tracking) return;
+  const frame = getROIPixels();
+  if (frame && prevFrame) {
+    const motion = computeVerticalFlow(prevFrame, frame);
+    const speed = Math.min(motion, 30);
+    speedVal.textContent = speed.toFixed(1);
+    const barPct = Math.min(100, speed / 25 * 100);
+    speedBar.style.width = barPct + '%';
+    pushSpeed(speed);
+  }
+  prevFrame = frame;
+  animId = requestAnimationFrame(trackLoop);
+}
+
+trackBtn.addEventListener('click', () => {
+  tracking = !tracking;
+  if (tracking) {
+    trackBtn.textContent = 'Pause';
+    trackBtn.classList.add('danger');
+    trackBtn.classList.remove('primary');
+    prevFrame = null;
+    animId = requestAnimationFrame(trackLoop);
+  } else {
+    trackBtn.textContent = 'Track';
+    trackBtn.classList.remove('danger');
+    trackBtn.classList.add('primary');
+    cancelAnimationFrame(animId);
+  }
+});
+
+newSetBtn.addEventListener('click', () => {
+  addSetDataset();
+});
+
+clearBtn.addEventListener('click', () => {
+  if (tracking) {
+    tracking = false;
+    cancelAnimationFrame(animId);
+    trackBtn.textContent = 'Track';
+    trackBtn.classList.remove('danger');
+    trackBtn.classList.add('primary');
+  }
+  state = { currentSet: 0, reps: 0, peakSpeed: 0, speeds: [], timestamps: [], setData: [], repInProgress: false, restTimer: 0, frameCount: 0 };
+  initChart();
+  speedVal.textContent = '0.0';
+  speedBar.style.width = '0%';
+  mReps.textContent = 0;
+  mPeak.textContent = '0.0';
+  mSets.textContent = 0;
+  setLabel.textContent = 'SET 0';
+  prevFrame = null;
+  if (video.srcObject) addSetDataset();
+});
+
+startBtn.addEventListener('click', startCamera);
+</script>
+</body>
+</html>
